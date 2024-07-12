@@ -1,0 +1,278 @@
+---
+title: '"NYPD Shooting Incident Data Analysis"'
+author: "J.Hastings"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+always_allow_html: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Set the CRAN mirror
+options(repos = c(CRAN = "https://cran.rstudio.com"))
+
+# Install necessary packages
+if (!requireNamespace("tidyverse", quietly = TRUE)) install.packages("tidyverse")
+if (!requireNamespace("lubridate", quietly = TRUE)) install.packages("lubridate")
+if (!requireNamespace("fable", quietly = TRUE)) install.packages("fable")
+if (!requireNamespace("tsibble", quietly = TRUE)) install.packages("tsibble")
+if (!requireNamespace("ggplot2", quietly = TRUE)) install.packages("ggplot2")
+if (!requireNamespace("leaflet", quietly = TRUE)) install.packages("leaflet")
+if (!requireNamespace("webshot2", quietly = TRUE)) install.packages("webshot2")
+if (!requireNamespace("htmlwidgets", quietly = TRUE)) install.packages("htmlwidgets")
+
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(readr)
+library(lubridate)
+library(leaflet)
+library(leaflet.extras)
+library(broom)
+library(fable)
+library(tsibble)
+library(ggplot2)
+library(leaflet)
+install.packages("webshot2")
+install.packages("htmlwidgets")
+library(webshot2)
+library(htmlwidgets)
+
+```
+
+## Introduction
+
+### In this report, we will analyze the NYPD Shooting Incident Data.
+
+Import the shooting project data set
+
+```{r import, include=TRUE}
+data_url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+shooting_data <- read_csv(data_url)
+```
+
+Convert **'OCCUR_DATE'** column to Date. Format remaining columns to factors
+
+```{r date_format, include=TRUE}
+shooting_data <- shooting_data %>%
+  mutate(
+    OCCUR_DATE = mdy(OCCUR_DATE),
+    BORO = as.factor(BORO),
+    LOC_OF_OCCUR_DESC = as.factor(LOC_OF_OCCUR_DESC),
+    LOC_CLASSFCTN_DESC = as.factor(LOC_CLASSFCTN_DESC),
+    LOCATION_DESC = as.factor(LOCATION_DESC),
+    PERP_AGE_GROUP = as.factor(PERP_AGE_GROUP),
+    PERP_SEX = as.factor(PERP_SEX),
+    PERP_RACE = as.factor(PERP_RACE),
+    VIC_AGE_GROUP = as.factor(VIC_AGE_GROUP),
+    VIC_SEX = as.factor(VIC_SEX),
+    VIC_RACE = as.factor(VIC_RACE)
+  )
+summary(shooting_data)
+```
+
+## Summary of the NYPD Shooting Incident Data
+
+This summary provides a statistical overview of the NYPD Shooting Incident dataset:
+
+-   The dataset covers incidents from January 1, 2006, to December 29, 2023.
+
+-   The majority of incidents occur in Brooklyn and the Bronx.
+
+-   A significant number of incidents are classified as happening outside, but many have missing location descriptions.
+
+-   There are notable gaps in the perpetrator and victim age, sex, and race data.
+
+-   The dataset includes geolocation information which can be useful for spatial analysis of shooting incidents.
+
+## Tidy up data
+### Identify and display rows with any missing values
+
+```{r check_missing_data, include=TRUE}
+# Check for missing values in each column
+missing_data_summary <- sapply(shooting_data, function(x) sum(is.na(x)))
+
+# Print the summary of missing data
+print(missing_data_summary)
+```
+
+```{r remove_missing, include=TRUE}
+# Remove specified columns
+# These columns were chosen to be removed due to the majority of the data being null 
+shooting_data <- shooting_data %>%
+  select(-LOC_OF_OCCUR_DESC, -LOC_CLASSFCTN_DESC, -LOCATION_DESC,    
+         -PERP_AGE_GROUP, -PERP_SEX, -PERP_RACE)
+
+# Remove rows with any missing values
+shooting_data_clean <- shooting_data %>% drop_na()
+
+# Display the summary of missing data to confirm no 'NA' values
+missing_data_summary <- sapply(shooting_data_clean, function(x) sum(is.na(x)))
+print(missing_data_summary)
+```
+
+From the summary above you can see that the missing values are now removed
+
+### Explanation:
+
+**Data Import**: Imported the dataset from the provided URL and checked the column names to ensure required columns are present.
+
+**Data Transformation**: Converted `OCCUR_DATE` to date format, and other relevant columns to factors. Removed specified unnecessary columns.
+
+**Handling Missing Data**: Used `drop_na()` to remove all rows with any missing values to ensure data quality.
+
+**Summary Statistics**: Provided summary statistics of the cleaned dataset to verify there are no missing data.
+
+This concludes the data cleaning and preparation steps.
+
+## Visualization 1
+
+Extract year and month from OCCUR_DATE
+
+```{r trend_visual, include=TRUE}
+shooting_data_clean <- shooting_data_clean %>%
+  mutate(
+    year = year(OCCUR_DATE),
+    month = month(OCCUR_DATE, label = TRUE)
+  )
+
+# Plot the number of shooting incidents per year
+ggplot(data = shooting_data_clean, aes(x = year)) +
+  geom_bar(stat = "count") +
+  labs(title = "Number of Shooting Incidents Per Year", x = "Year", y = "Number of Incidents")
+
+# Plot the number of shooting incidents per month
+ggplot(data = shooting_data_clean, aes(x = month)) +
+  geom_bar(stat = "count") +
+  labs(title = "Number of Shooting Incidents Per Month", x = "Month", y = "Number of Incidents")
+```
+
+## Visualization 1:
+
+**Shooting incidents per year**-As you can see from year 2000 to year 2019 shooting have been on a steady decline. However in year 2020 there was a sharp uptick in shootings right around the covid-pandemic. During this time people lost their jobs with anxiety increasing.
+
+**Shooting incidents per month**-There appears to be a trend in the months(May,June,July and August). Hotter months resulted in increased shooting incidents.
+
+**Additional questions raised that should be investigated:**
+
+Are there other socio-economic factors, such as unemployment rates, poverty levels, or changes in law enforcement practices, that correlate with these trends?
+
+Does the Holiday, 4th of July coincide with spikes in incidents?
+
+## Visualization 2:
+
+**Create a leaflet map to visualize hotspots**
+
+Create a leaflet map to visualize hotspots
+
+```{r hot_map, include=TRUE}
+# Create the map
+map <- leaflet(data = shooting_data_clean) %>%
+  addTiles() %>%
+  addHeatmap(lng = ~Longitude, lat = ~Latitude, intensity = ~1, blur = 20, max = 0.05) %>%
+  addCircles(lng = ~Longitude, lat = ~Latitude, popup = ~paste("Date:", OCCUR_DATE, "<br>", "Borough:", BORO))
+
+# Save the map as an HTML file
+saveWidget(map, "map.html", selfcontained = TRUE)
+
+# Take a screenshot of the map
+webshot("map.html", file = "map.png", cliprect = "viewport")
+```
+
+## Visualization 2:
+
+**Hot-spot Analysis**: The hot-spot analysis heat-map shows geographic areas with high concentrations of shooting incidents. This visualization helps identify specific locations with a higher density of incidents. Each blue marker on the map represents a shooting spot, with a pop up providing details about the incident, including the date and borough. This can be useful for law enforcement and policymakers to focus their efforts on areas with higher crime rates.
+
+**Additional questions raised that should be investigated:**
+
+Which neighborhoods or boroughs have the highest concentration of shooting incidents?
+
+Are there specific times or patterns within these hotspots?
+
+## Predictive Modeling
+
+**Forecasting:** Use historical data to predict future shooting incidents.
+
+```{r perdiction_incident_model, include=TRUE}
+# Ensure OCCUR_DATE is a Date and extract year and month
+shooting_data_clean <- shooting_data_clean %>%
+  mutate(
+    OCCUR_DATE = as.Date(OCCUR_DATE, format = "%Y-%m-%d"),
+    year = year(OCCUR_DATE),
+    month = month(OCCUR_DATE, label = TRUE)
+  )
+
+# Aggregate shooting incidents by year and month
+monthly_data <- shooting_data_clean %>%
+  group_by(year, month) %>%
+  summarize(incidents = n(), .groups = 'drop')
+
+# Check for missing values or invalid data
+print(monthly_data)
+
+# Ensure no missing values in the aggregated data
+monthly_data <- monthly_data %>%
+  filter(!is.na(year) & !is.na(month) & !is.na(incidents))
+
+# Check if monthly_data has observations
+if (nrow(monthly_data) == 0) {
+  stop("No data available for time series analysis after filtering.")
+}
+
+# Create a tsibble object for time series analysis
+monthly_data <- monthly_data %>%
+  mutate(year_month = yearmonth(paste(year, month))) %>%
+  as_tsibble(index = year_month)
+
+# Fit an ARIMA model using fable
+fit <- monthly_data %>%
+  model(ARIMA(incidents ~ pdq(0,1,1) + PDQ(0,1,1)))
+
+# Forecast for the next 24 months (year 2025)
+forecasted <- fit %>%
+  forecast(h = "24 months")
+
+# Plot the forecast
+autoplot(forecasted) +
+  labs(title = "Forecasted Shooting Incidents for the Next 24 Months", x = "Month", y = "Number of Incidents")
+```
+
+```         
+
+### Interpretation:
+
+1.  The central blue line represents the expected number of shooting incidents per month over the next year.
+2.  The darker blue band shows the 80% prediction interval, indicating the range within which the actual number of incidents is expected to fall with 80% confidence.
+3.  The lighter blue band shows the 95% prediction interval, indicating the range within which the actual number of incidents is expected to fall with 95% confidence.
+4.  The forecast suggests that the number of shooting incidents will fluctuate, with prediction intervals indicating the uncertainty in these forecasts.
+5.  The expected number of incidents generally falls between 0 and 200 incidents per month, with most predictions closer to the lower end of this range.
+```
+
+## Conclusion & Possible Biases in Models and Visualizations
+
+**Visualization 1(Bar Chart): Shooting Incidents Per Year and Per Month**
+
+1.  Time Frame Bias: The sharp uptick in 2020 could be heavily influenced by the COVID-19 pandemic, which is an outlier event. This could distort the understanding of the general trend.
+
+2.  Seasonal Bias: This seasonal trend might not hold in different climates or regions, and generalizing it could be misleading.
+
+3.  Socio-economic and External Factors: The visualizations do not account for other socio-economic factors such as unemployment rates, poverty levels, changes in law enforcement practices, or cultural events that could influence shooting incidents.
+
+**Visualization 2: Hot spot Analysis(shows geographic areas with high concentrations of shooting incidents)**
+
+1.  Spatial Bias: The heat-map might emphasize certain areas due to higher population density rather than a higher incidence rate per capita.
+
+2.  Contextual Factors: The analysis might miss contextual factors such as the presence of schools, police stations, or other facilities that could influence the density of shooting incidents.
+
+**Predictive Modeling**
+
+Model Assumptions:
+
+1.  Uncertainty and Overconfidence: Prediction intervals provide a range, but the actual incidents might still fall outside these intervals due to un-modeled factors.
+
+2.  There might be overconfidence in the models ability to predict future incidents accurately. Bias in Historical Data:
+
+3.  If the historical data is biased (e.g., due to under reporting or changes in data collection methods), the predictions will inherit these biases. Historical events that influenced shooting incidents might not be present in the future, making the model less reliable.
